@@ -88,6 +88,7 @@ Phrase : "{data.question}" """
             entities=[]
         )
 
+       # Tentative de parsing robuste du retour HuggingFace
     try:
         lines = response_text.strip().split("\n")
         intention = "autre"
@@ -95,13 +96,13 @@ Phrase : "{data.question}" """
         search_query = data.question
 
         for line in lines:
-            if "intention" in line.lower():
-                intention = line.split(":")[1].strip() if ":" in line else "autre"
-            elif "mots-clés" in line.lower() or "keywords" in line.lower():
-                entities_raw = line.split(":")[1].strip() if ":" in line else "[]"
-            elif "requête" in line.lower() or "query" in line.lower():
-                search_query = line.split(":")[1].strip() if ":" in line else data.question
-
+            lower = line.lower()
+            if "intention" in lower and ":" in line:
+                intention = line.split(":", 1)[1].strip()
+            elif ("mots-clés" in lower or "keywords" in lower) and ":" in line:
+                entities_raw = line.split(":", 1)[1].strip()
+            elif ("requête" in lower or "query" in lower) and ":" in line:
+                search_query = line.split(":", 1)[1].strip()
 
         entities = ast.literal_eval(entities_raw) if entities_raw.startswith("[") else []
         if not isinstance(entities, list):
@@ -111,6 +112,7 @@ Phrase : "{data.question}" """
         intention = "recherche"
         entities = []
         search_query = data.question
+
 
 
 
