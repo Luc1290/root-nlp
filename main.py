@@ -10,15 +10,18 @@ load_dotenv()
 app = FastAPI()
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
+
 class QuestionRequest(BaseModel):
     question: str
+
 
 class FinalResponse(BaseModel):
     action: str
     prompt: str
     url: str = None
     content: str = None
-    entities: list[str] = []  # <-- ajout pour exposer les entités
+    entities: list[str] = []
+
 
 async def call_huggingface_model(prompt: str) -> str:
     headers = {
@@ -27,13 +30,36 @@ async def call_huggingface_model(prompt: str) -> str:
     payload = {
         "inputs": prompt
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api-inference.huggingface.co/models/google/flan-t5-base",
-            headers=headers,
-            json=payload
-        )
-        return response.json()[0]["generated_text"]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api-inference.huggingface.co/models/google/flan-t5-base",
+                headers=headers,
+                json=payload,
+                timeout=15.0
+            )
+
+            if response.status_code != 200:
+                print(f"❌ Hugging Face ERROR [{response.status_code}]: {response.text}")
+                return "Intention: recherche\nMots-clés: []\nRequête: " + prompt
+
+            try:
+                data = response.json()
+                if isinstance(data, list) and "generated_text" in data[0]:
+                    return data[0]["generated_text"]
+                else:
+                    print("⚠️ Réponse inattendue Hugging Face :", data)
+                    return "Intention: recherche\nMots-clés: []\nRequête: " + prompt
+            except Exception as e:
+                print("⚠️ Erreur de parsing JSON Hugging Face :", e)
+                print("Contenu brut :", response.text)
+                return "Intention: recherche\nMots-clés: []\nRequête: " + prompt
+
+    except Exception as e:
+        print("💥 Exception lors de l'appel Hugging Face :", e)
+        return "Intention: recherche\nMots-clés: []\nRequête: " + prompt
+
 
 async def scrape_and_summarize(search_query: str) -> tuple[str, str]:
     async with httpx.AsyncClient() as client:
@@ -43,6 +69,7 @@ async def scrape_and_summarize(search_query: str) -> tuple[str, str]:
         )
         data = scrape_response.json()
         return data.get("url", ""), data.get("content", "")
+
 
 @app.post("/analyze", response_model=FinalResponse)
 async def analyze_question(data: QuestionRequest):
@@ -57,14 +84,12 @@ Phrase : "{data.question}" """
 
     print("🧠 Résultat NLP brut :", response_text)
 
-    # Parsing intention, entities, search_query
     try:
         lines = response_text.strip().split("\n")
         intention = lines[0].split(":")[1].strip()
         entities_raw = lines[1].split(":")[1].strip()
         search_query = lines[2].split(":")[1].strip()
 
-        # Sécurise l’évaluation de la liste d’entités
         entities = ast.literal_eval(entities_raw) if entities_raw.startswith("[") else []
         if not isinstance(entities, list):
             entities = []
