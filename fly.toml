@@ -5,6 +5,7 @@ app = "root-nlp"
 
 [env]
   PORT = "8080"
+  HF_API_TOKEN = "github:HF_API_TOKEN"
 
 [[services]]
   internal_port = 8080
