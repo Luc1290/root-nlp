@@ -90,9 +90,18 @@ Phrase : "{data.question}" """
 
     try:
         lines = response_text.strip().split("\n")
-        intention = lines[0].split(":")[1].strip() if len(lines) > 0 and ":" in lines[0] else "autre"
-        entities_raw = lines[1].split(":")[1].strip() if len(lines) > 1 and ":" in lines[1] else "[]"
-        search_query = lines[2].split(":")[1].strip() if len(lines) > 2 and ":" in lines[2] else data.question
+        intention = "autre"
+        entities_raw = "[]"
+        search_query = data.question
+
+        for line in lines:
+            if "intention" in line.lower():
+                intention = line.split(":")[1].strip() if ":" in line else "autre"
+            elif "mots-clés" in line.lower() or "keywords" in line.lower():
+                entities_raw = line.split(":")[1].strip() if ":" in line else "[]"
+            elif "requête" in line.lower() or "query" in line.lower():
+                search_query = line.split(":")[1].strip() if ":" in line else data.question
+
 
         entities = ast.literal_eval(entities_raw) if entities_raw.startswith("[") else []
         if not isinstance(entities, list):
