@@ -1,4 +1,5 @@
 app = "root-nlp"
+primary_region = "cdg"
 
 [build]
   dockerfile = "./Dockerfile"
@@ -10,11 +11,25 @@ app = "root-nlp"
 [[services]]
   internal_port = 8080
   protocol = "tcp"
+  processes = ["app"]  # si tu as ce genre de config
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+  [[services.ports]]
+    port = 8080
+    handlers = []
 
   [[services.ports]]
     port = 80
+    handlers = ["http"]
+
   [[services.ports]]
     port = 443
+    handlers = ["tls", "http"]
+
 
   [[services.tcp_checks]]
     interval = "15s"

@@ -59,3 +59,36 @@ Phrase : "{data.question}" """
         entities=entities,
         search_query=search_query
     )
+
+class PromptRequest(BaseModel):
+    question: str
+    intention: str
+    entities: list[str]
+    url: str
+    content: str
+
+class PromptResponse(BaseModel):
+    prompt: str
+
+@app.post("/prepare-groq-prompt", response_model=PromptResponse)
+async def prepare_prompt(data: PromptRequest):
+    prompt = f"""
+Tu es ROOT, une intelligence artificielle experte en réponse contextuelle fiable.
+
+L'utilisateur demande : "{data.question}"
+
+Voici un contenu provenant de la page : {data.url}
+
+=== DÉBUT DU CONTENU ===
+{data.content}
+=== FIN DU CONTENU ===
+
+Ta tâche :
+- Réponds à la question en te basant uniquement sur ce contenu
+- Si aucune info utile n’est présente, dis-le honnêtement
+- Donne une réponse claire, naturelle, et bien formulée
+
+(Source : {data.url})
+""".strip()
+
+    return PromptResponse(prompt=prompt)
