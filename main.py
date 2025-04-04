@@ -1,8 +1,8 @@
-
 from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
+import ast
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,6 +18,7 @@ class FinalResponse(BaseModel):
     prompt: str
     url: str = None
     content: str = None
+    entities: list[str] = []  # <-- ajout pour exposer les entités
 
 async def call_huggingface_model(prompt: str) -> str:
     headers = {
@@ -54,15 +55,29 @@ Phrase : "{data.question}" """
 
     response_text = await call_huggingface_model(prompt)
 
+    print("🧠 Résultat NLP brut :", response_text)
+
+    # Parsing intention, entities, search_query
     try:
         lines = response_text.strip().split("\n")
         intention = lines[0].split(":")[1].strip()
-        entities = eval(lines[1].split(":")[1].strip())
+        entities_raw = lines[1].split(":")[1].strip()
         search_query = lines[2].split(":")[1].strip()
-    except:
+
+        # Sécurise l’évaluation de la liste d’entités
+        entities = ast.literal_eval(entities_raw) if entities_raw.startswith("[") else []
+        if not isinstance(entities, list):
+            entities = []
+
+    except Exception as e:
+        print("⚠️ Erreur d'analyse NLP :", e)
         intention = "recherche"
         entities = []
         search_query = data.question
+
+    print(f"🎯 Intention : {intention}")
+    print(f"🔑 Entités : {entities}")
+    print(f"🔍 Requête optimisée : {search_query}")
 
     if intention == "recherche":
         url, content = await scrape_and_summarize(search_query)
@@ -86,14 +101,15 @@ Ta tâche :
             action="scrape+groq",
             prompt=prompt_final.strip(),
             url=url,
-            content=content
+            content=content,
+            entities=entities
         )
     else:
         prompt_final = f"""L'utilisateur dit : "{data.question}" 
-    
 
 Réponds naturellement, de façon utile et concise."""
         return FinalResponse(
             action="just_groq",
-            prompt=prompt_final.strip()
+            prompt=prompt_final.strip(),
+            entities=entities
         )
