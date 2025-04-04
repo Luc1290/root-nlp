@@ -21,39 +21,50 @@ class FinalResponse(BaseModel):
     entities: list[str] = []
 
 async def call_huggingface_model(prompt: str) -> str:
-    print("🧠 Appel Hugging Face lancé")
-    headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
-    payload = {"inputs": prompt}
+    headers = {
+        "Authorization": f"Bearer {HF_API_TOKEN}"
+    }
+    payload = {
+        "inputs": prompt
+    }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                "https://api-inference.huggingface.co/models/google/flan-t5-base",
-                headers=headers,
-                json=payload
-            )
-            print(f"✅ Réponse HF status: {response.status_code}")
-            print(f"📦 Contenu brut HF: {response.text[:300]}")  # évite les pavés
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://api-inference.huggingface.co/models/google/flan-t5-base",
+            headers=headers,
+            json=payload
+        )
+
+        print("📭 Contenu brut HF:", response.text)
+        print("📭 Réponse HF status:", response.status_code)
+
+        try:
             return response.json()[0]["generated_text"]
-    except Exception as e:
-        print(f"🛑 ERREUR Hugging Face: {e}")
-        raise
+        except Exception as e:
+            print("❌ ERREUR Hugging Face:", e)
+            return "Intention: autre\nMots-clés: []\nRequête: " + prompt  # Fallback safe
+
+
 
 async def scrape_and_summarize(search_query: str) -> tuple[str, str]:
-    print(f"🕸️ Début du scraping pour : {search_query}")
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(
+    async with httpx.AsyncClient() as client:
+        try:
+            scrape_response = await client.post(
                 "https://root-web-scraper.fly.dev/scrape",
                 json={"query": search_query}
             )
-            print(f"✅ Réponse Scraper status: {response.status_code}")
-            print(f"📦 Contenu brut Scraper: {response.text[:300]}")
-            data = response.json()
+            print("📦 Contenu brut Scraper:", scrape_response.text)
+            print("📦 Réponse Scraper status:", scrape_response.status_code)
+
+            if scrape_response.status_code != 200:
+                return "", ""
+
+            data = scrape_response.json()
             return data.get("url", ""), data.get("content", "")
-    except Exception as e:
-        print(f"🛑 ERREUR Scraper: {e}")
-        return "", "Erreur lors du scraping."
+        except Exception as e:
+            print("🔥 Erreur scraper:", e)
+            return "", ""
+
 
 @app.post("/analyze", response_model=FinalResponse)
 async def analyze_question(data: QuestionRequest):
@@ -79,21 +90,20 @@ Phrase : "{data.question}" """
 
     try:
         lines = response_text.strip().split("\n")
-        intention = lines[0].split(":")[1].strip()
-        entities_raw = lines[1].split(":")[1].strip()
-        search_query = lines[2].split(":")[1].strip()
-
-        print("🧩 Données extraites NLP :", intention, entities_raw, search_query)
+        intention = lines[0].split(":")[1].strip() if len(lines) > 0 and ":" in lines[0] else "autre"
+        entities_raw = lines[1].split(":")[1].strip() if len(lines) > 1 and ":" in lines[1] else "[]"
+        search_query = lines[2].split(":")[1].strip() if len(lines) > 2 and ":" in lines[2] else data.question
 
         entities = ast.literal_eval(entities_raw) if entities_raw.startswith("[") else []
         if not isinstance(entities, list):
-            print("⚠️ Entités non liste !")
             entities = []
     except Exception as e:
         print("⚠️ Erreur d'analyse NLP :", e)
         intention = "recherche"
         entities = []
         search_query = data.question
+
+
 
     print(f"🎯 Intention : {intention}")
     print(f"🔑 Entités : {entities}")
@@ -103,6 +113,15 @@ Phrase : "{data.question}" """
         url, content = await scrape_and_summarize(search_query)
         print(f"🔗 URL récupérée : {url}")
         print(f"📃 Résumé contenu (début) : {content[:300]}...")
+        if not content:
+            return FinalResponse(
+                action="just_groq",
+                prompt=f"Je n'ai pas pu récupérer d'informations utiles pour : '{data.question}'. Essaie de reformuler ou pose une autre question.",
+                url=url,
+                content="",
+                entities=entities
+            )
+
 
         prompt_final = f"""Tu es ROOT, une intelligence artificielle experte en réponse contextuelle fiable.
 
