@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request
+
+from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
@@ -12,10 +13,11 @@ HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 class QuestionRequest(BaseModel):
     question: str
 
-class NLPResponse(BaseModel):
-    intention: str
-    entities: list[str]
-    search_query: str
+class FinalResponse(BaseModel):
+    action: str
+    prompt: str
+    url: str = None
+    content: str = None
 
 async def call_huggingface_model(prompt: str) -> str:
     headers = {
@@ -32,7 +34,16 @@ async def call_huggingface_model(prompt: str) -> str:
         )
         return response.json()[0]["generated_text"]
 
-@app.post("/analyze", response_model=NLPResponse)
+async def scrape_and_summarize(search_query: str) -> tuple[str, str]:
+    async with httpx.AsyncClient() as client:
+        scrape_response = await client.post(
+            "https://root-web-scraper.fly.dev/scrape",
+            json={"query": search_query}
+        )
+        data = scrape_response.json()
+        return data.get("url", ""), data.get("content", "")
+
+@app.post("/analyze", response_model=FinalResponse)
 async def analyze_question(data: QuestionRequest):
     prompt = f"""Analyse la phrase suivante et donne :
 - une intention (recherche, commande, salutation, autre)
@@ -43,7 +54,6 @@ Phrase : "{data.question}" """
 
     response_text = await call_huggingface_model(prompt)
 
-    # 💡 Très simple parser naïf pour ce MVP
     try:
         lines = response_text.strip().split("\n")
         intention = lines[0].split(":")[1].strip()
@@ -54,33 +64,16 @@ Phrase : "{data.question}" """
         entities = []
         search_query = data.question
 
-    return NLPResponse(
-        intention=intention,
-        entities=entities,
-        search_query=search_query
-    )
-
-class PromptRequest(BaseModel):
-    question: str
-    intention: str
-    entities: list[str]
-    url: str
-    content: str
-
-class PromptResponse(BaseModel):
-    prompt: str
-
-@app.post("/prepare-groq-prompt", response_model=PromptResponse)
-async def prepare_prompt(data: PromptRequest):
-    prompt = f"""
-Tu es ROOT, une intelligence artificielle experte en réponse contextuelle fiable.
+    if intention == "recherche":
+        url, content = await scrape_and_summarize(search_query)
+        prompt_final = f"""Tu es ROOT, une intelligence artificielle experte en réponse contextuelle fiable.
 
 L'utilisateur demande : "{data.question}"
 
-Voici un contenu provenant de la page : {data.url}
+Voici un contenu provenant de la page : {url}
 
 === DÉBUT DU CONTENU ===
-{data.content}
+{content}
 === FIN DU CONTENU ===
 
 Ta tâche :
@@ -88,7 +81,19 @@ Ta tâche :
 - Si aucune info utile n’est présente, dis-le honnêtement
 - Donne une réponse claire, naturelle, et bien formulée
 
-(Source : {data.url})
-""".strip()
+(Source : {url})"""
+        return FinalResponse(
+            action="scrape+groq",
+            prompt=prompt_final.strip(),
+            url=url,
+            content=content
+        )
+    else:
+        prompt_final = f"""L'utilisateur dit : "{data.question}" 
+    
 
-    return PromptResponse(prompt=prompt)
+Réponds naturellement, de façon utile et concise."""
+        return FinalResponse(
+            action="just_groq",
+            prompt=prompt_final.strip()
+        )
