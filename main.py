@@ -2,7 +2,6 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
-import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -10,70 +9,49 @@ load_dotenv()
 app = FastAPI()
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 
+# 🔍 Liste des intentions possibles
+INTENT_LABELS = ["recherche_web", "discussion", "generation_image", "generation_code", "autre"]
+
 class QuestionRequest(BaseModel):
     question: str
 
 class IntentResult(BaseModel):
     intent: str
-    entities: dict
 
-async def call_huggingface_model(prompt: str) -> str:
+async def call_huggingface_model(question: str) -> str:
     headers = {
         "Authorization": f"Bearer {HF_API_TOKEN}"
     }
+
     payload = {
-        "inputs": prompt
+        "inputs": question,
+        "parameters": {
+            "candidate_labels": INTENT_LABELS,
+            "multi_label": False
+        }
     }
 
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://api-inference.huggingface.co/models/google/flan-t5-base",
+            "https://api-inference.huggingface.co/models/facebook/bart-large-mnli",
             headers=headers,
             json=payload
         )
-        try:
-            return response.json()[0]["generated_text"]
-        except Exception as e:
-            print("❌ Hugging Face Error:", e)
-            return '{ "intent": "autre", "entities": {} }'
+
+        data = response.json()
+        if "labels" in data:
+            return data["labels"][0]  # Intention avec la probabilité la plus forte
+        else:
+            print("⚠️ Modèle Hugging Face : réponse inattendue", data)
+            return "autre"
 
 @app.post("/analyze", response_model=IntentResult)
 async def analyze_question(data: QuestionRequest):
     print("📩 Question reçue :", data.question)
 
-    prompt = f"""
-Tu es un assistant d'analyse sémantique. Ton travail est de détecter l’intention d’une phrase et d’identifier les entités importantes.
+    intent = await call_huggingface_model(data.question)
 
-⚠️ Tu dois répondre uniquement en JSON, sans ajouter d’explication ou de texte supplémentaire.
-
-Voici le format que tu dois respecter, toujours :
-{{
-  "intent": "nom_de_l_intention",
-  "entities": {{
-    "clé1": "valeur1",
-    "clé2": "valeur2"
-  }}
-}}
-
-Phrase : "{data.question}"
-"""
-
-    try:
-        response_text = await call_huggingface_model(prompt)
-        print("🧠 Réponse brute HF:", response_text)
-
-        parsed = json.loads(response_text.strip())  # Sécurisé
-        intent = parsed.get("intent", "autre")
-        entities = parsed.get("entities", {})
-
-        return {
-            "intent": intent,
-            "entities": entities
-        }
-
-    except Exception as e:
-        print("⚠️ Parsing error:", e)
-        return {
-            "intent": "autre",
-            "entities": {}
-        }
+    print(f"✅ Intention détectée : {intent}")
+    return {
+        "intent": intent
+    }
