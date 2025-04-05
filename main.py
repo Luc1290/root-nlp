@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 import time
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import asyncio
+import re
 
 # Configurer le logging
 logging.basicConfig(
@@ -21,7 +23,7 @@ app = FastAPI()
 # Ajouter CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Ou spécifier les domaines exacts
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,27 +31,39 @@ app.add_middleware(
 
 HF_API_TOKEN = os.getenv("HF_API_TOKEN")
 if not HF_API_TOKEN:
-    logger.error("🚨 HF_API_TOKEN manquant dans les variables d'environnement")
-    # On continue l'exécution, mais on avertit 
+    logger.warning("🚨 HF_API_TOKEN manquant dans les variables d'environnement")
 
 # 🔍 Liste des intentions possibles
 INTENT_LABELS = ["recherche_web", "discussion", "generation_image", "generation_code", "autre"]
 
-# Modèle de secours si HuggingFace échoue
-DEFAULT_INTENT_RULES = {
-    "code": "generation_code",
-    "programme": "generation_code",
-    "script": "generation_code",
-    "function": "generation_code",
-    "cherche": "recherche_web",
-    "trouve": "recherche_web",
-    "recherche": "recherche_web",
-    "quand": "recherche_web",
-    "qui est": "recherche_web",
-    "qu'est-ce que": "recherche_web",
-    "dessine": "generation_image",
-    "image": "generation_image",
-    "photo": "generation_image",
+# Règles de secours au cas où Hugging Face échoue
+FALLBACK_RULES = {
+    # Mots-clés qui indiquent fortement une intention
+    "keywords": {
+        "generation_code": ["code", "programme", "script", "fonction", "programmer", "développer"],
+        "recherche_web": ["cherche", "météo", "président", "capitale", "définition"],
+        "generation_image": ["dessine", "image", "visualise", "dessin"]
+    },
+    
+    # Patterns qui indiquent fortement une intention
+    "patterns": {
+        "recherche_web": [
+            r"(?i).*météo.*",
+            r"(?i).*quel temps.*à.*",
+            r"(?i).*qui est le président.*",
+            r"(?i).*quelle est la capitale.*",
+            r"(?i).*où se trouve.*",
+            r"(?i).*combien.*coûte.*",
+        ],
+        "generation_image": [
+            r"(?i)dessine[- ]moi.*",
+            r"(?i)génère[- ]moi une image.*",
+        ],
+        "generation_code": [
+            r"(?i)écris[- ]moi un (code|programme|script).*",
+            r"(?i)comment coder.*",
+        ]
+    }
 }
 
 class QuestionRequest(BaseModel):
@@ -71,7 +85,7 @@ async def call_huggingface_model(question: str) -> tuple[str, float]:
         logger.info(f"🔄 Utilisation du cache pour: '{question[:30]}...' -> {cached_intent}")
         return cached_intent, confidence
     
-    # Si pas de token, utilisez le fallback
+    # Si pas de token, utiliser le fallback
     if not HF_API_TOKEN:
         logger.warning("⚠️ HF_API_TOKEN non trouvé, utilisation des règles par défaut")
         return fallback_intent_detection(question)
@@ -83,11 +97,13 @@ async def call_huggingface_model(question: str) -> tuple[str, float]:
         "Authorization": f"Bearer {HF_API_TOKEN}"
     }
 
+    # Amélioration du prompt pour mieux diriger le modèle
     payload = {
         "inputs": question,
         "parameters": {
             "candidate_labels": INTENT_LABELS,
-            "multi_label": False
+            "multi_label": False,
+            "hypothesis_template": "Cette requête est une demande de {}."
         }
     }
 
@@ -112,6 +128,17 @@ async def call_huggingface_model(question: str) -> tuple[str, float]:
                 intent = data["labels"][0]
                 confidence = data["scores"][0]
                 
+                # Si la confiance est très faible, on vérifie avec les règles
+                if confidence < 0.6:
+                    logger.warning(f"⚠️ Confiance faible ({confidence:.2f}), vérification avec règles")
+                    fallback_intent, fallback_confidence = fallback_intent_detection(question)
+                    
+                    # Si les règles ont une confiance plus élevée, on les utilise
+                    if fallback_confidence > confidence + 0.1:  # +0.1 pour favoriser HF quand c'est proche
+                        logger.info(f"🔄 Utilisation du fallback: {fallback_intent} (confiance: {fallback_confidence:.2f})")
+                        intent = fallback_intent
+                        confidence = fallback_confidence
+                
                 # Mettre en cache
                 if len(intent_cache) >= MAX_CACHE_SIZE:
                     # Supprimer une entrée aléatoire si le cache est plein
@@ -131,15 +158,31 @@ def fallback_intent_detection(question: str) -> tuple[str, float]:
     """Méthode de secours pour détecter l'intention si HuggingFace échoue"""
     question_lower = question.lower()
     
-    # Recherche de mots-clés dans la question
-    for keyword, intent in DEFAULT_INTENT_RULES.items():
-        if keyword in question_lower:
-            logger.info(f"🔍 Intention détectée par règles: {intent} (mot-clé: {keyword})")
-            return intent, 0.7  # Confiance arbitraire
+    # Vérifier d'abord les patterns
+    for intent, patterns in FALLBACK_RULES["patterns"].items():
+        for pattern in patterns:
+            if re.match(pattern, question):
+                logger.info(f"🔍 Pattern détecté pour {intent}: {pattern}")
+                return intent, 0.85
+    
+    # Ensuite vérifier les mots-clés
+    for intent, keywords in FALLBACK_RULES["keywords"].items():
+        for keyword in keywords:
+            if keyword.lower() in question_lower:
+                logger.info(f"🔑 Mot-clé détecté pour {intent}: {keyword}")
+                return intent, 0.8
+    
+    # Analyse des mots interrogatifs pour la recherche web
+    if question.strip().endswith("?") and any(question_lower.startswith(w) for w in 
+                                             ["qui", "que", "quoi", "quel", "quelle", 
+                                              "quels", "quelles", "où", "comment", 
+                                              "pourquoi", "quand", "combien"]):
+        logger.info("❓ Question détectée, suggestion de 'recherche_web'")
+        return "recherche_web", 0.7
     
     # Par défaut, on considère que c'est une discussion
-    logger.info("🔄 Aucun mot-clé trouvé, utilisation de l'intention par défaut: discussion")
-    return "discussion", 0.5
+    logger.info("💬 Aucun pattern spécifique trouvé, utilisation de l'intention par défaut 'discussion'")
+    return "discussion", 0.6
 
 @app.post("/analyze", response_model=IntentResult)
 async def analyze_question(data: QuestionRequest, request: Request):
@@ -181,7 +224,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    import asyncio
     
     app.last_request_time = time.time()
     
