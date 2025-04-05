@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import httpx
 import os
-import ast
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -35,21 +35,23 @@ async def call_huggingface_model(prompt: str) -> str:
             return response.json()[0]["generated_text"]
         except Exception as e:
             print("❌ Hugging Face Error:", e)
-            return "intention: autre\nentities: {}"
+            return '{ "intent": "autre", "entities": {} }'
 
 @app.post("/analyze", response_model=IntentResult)
 async def analyze_question(data: QuestionRequest):
     print("📩 Question reçue :", data.question)
 
-    prompt = f"""Analyse l’intention de la phrase ci-dessous et identifie les éléments utiles.
+    prompt = f"""
+Tu es un assistant d'analyse sémantique. Ton travail est de détecter l’intention d’une phrase et d’identifier les entités importantes.
 
-Donne ta réponse au format JSON comme ceci :
+⚠️ Tu dois répondre uniquement en JSON, sans ajouter d’explication ou de texte supplémentaire.
+
+Voici le format que tu dois respecter, toujours :
 {{
-  "intent": "recherche_web",
+  "intent": "nom_de_l_intention",
   "entities": {{
-    "lieu": "Nantes",
-    "type_info": "météo",
-    "date": "aujourd’hui"
+    "clé1": "valeur1",
+    "clé2": "valeur2"
   }}
 }}
 
@@ -59,13 +61,16 @@ Phrase : "{data.question}"
     try:
         response_text = await call_huggingface_model(prompt)
         print("🧠 Réponse brute HF:", response_text)
-        parsed = ast.literal_eval(response_text.strip())
+
+        parsed = json.loads(response_text.strip())  # Sécurisé
         intent = parsed.get("intent", "autre")
         entities = parsed.get("entities", {})
+
         return {
             "intent": intent,
             "entities": entities
         }
+
     except Exception as e:
         print("⚠️ Parsing error:", e)
         return {
