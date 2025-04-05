@@ -1,38 +1,41 @@
-app = "root-nlp"
-primary_region = "cdg"
+# fly.toml app configuration file generated for root-nlp on 2025-04-05T23:28:36+02:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'root-nlp'
+primary_region = 'cdg'
 
 [build]
-  dockerfile = "./Dockerfile"
+  dockerfile = './Dockerfile'
 
 [env]
-  PORT = "8080"
-  HF_API_TOKEN = "github:HF_API_TOKEN"
+  PORT = '8080'
+  HF_API_TOKEN = 'github:HF_API_TOKEN'
+
 
 [[services]]
+  protocol = 'tcp'
   internal_port = 8080
-  protocol = "tcp"
-  processes = ["app"]  # si tu as ce genre de config
-
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 25
-    soft_limit = 20
+  processes = ['app']
 
   [[services.ports]]
     port = 8080
-    handlers = []
 
   [[services.ports]]
     port = 80
-    handlers = ["http"]
+    handlers = ['http']
 
   [[services.ports]]
     port = 443
-    handlers = ["tls", "http"]
+    handlers = ['tls', 'http']
 
+  [services.concurrency]
+    type = 'connections'
+    hard_limit = 25
+    soft_limit = 20
 
   [[services.tcp_checks]]
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "5s"
-    restart_limit = 0
+    interval = '15s'
+    timeout = '2s'
+    grace_period = '5s'

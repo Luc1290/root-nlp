@@ -34,7 +34,19 @@ if not HF_API_TOKEN:
     logger.warning("🚨 HF_API_TOKEN manquant dans les variables d'environnement")
 
 # 🔍 Liste des intentions possibles
-INTENT_LABELS = ["recherche_web", "discussion", "generation_image", "generation_code", "autre"]
+INTENT_LABELS = [
+    "recherche_web",           # chercher une info
+    "conversation",            # discuter, parler
+    "generation_image",        # créer une image
+    "generation_code",         # générer du code
+    "generation_texte",        # rédiger, inventer
+    "analyse_donnee",          # comprendre ou synthétiser des infos
+    "planification",           # demander de l'organisation
+    "conseil_emotionnel",      # besoin de soutien ou de motivation
+    "question_personnelle",    # introspection ou autoanalyse
+    "autre"                    # tout ce qui ne rentre dans rien
+]
+
 
 # Règles de secours au cas où Hugging Face échoue
 FALLBACK_RULES = {
@@ -54,6 +66,13 @@ FALLBACK_RULES = {
             r"(?i).*quelle est la capitale.*",
             r"(?i).*où se trouve.*",
             r"(?i).*combien.*coûte.*",
+            r"(?i).*parapluie.*demain.*",
+            r"(?i).*faut[- ]il.*parapluie.*",
+            r"(?i).*vais[- ]je.*prendre.*parapluie.*",
+            r"(?i).*pleuvoir.*demain.*",
+            r"(?i).*pluie.*demain.*",
+            
+
         ],
         "generation_image": [
             r"(?i)dessine[- ]moi.*",
@@ -103,7 +122,7 @@ async def call_huggingface_model(question: str) -> tuple[str, float]:
         "parameters": {
             "candidate_labels": INTENT_LABELS,
             "multi_label": False,
-            "hypothesis_template": "Cette requête est une demande de {}."
+            "hypothesis_template": "Dans le contexte de cette requête, l'utilisateur souhaite principalement obtenir un résultat relevant de la catégorie suivante : {}."
         }
     }
 
