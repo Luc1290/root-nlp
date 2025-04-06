@@ -36,7 +36,7 @@ if not HF_API_TOKEN:
 # 🔍 Liste des intentions possibles
 INTENT_LABELS = [
     "recherche_web",           # chercher une info
-    "conversation",            # discuter, parler
+    "discussion",            # discuter, parler
     "generation_image",        # créer une image
     "generation_code",         # générer du code
     "generation_texte",        # rédiger, inventer
